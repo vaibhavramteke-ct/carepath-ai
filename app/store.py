@@ -123,6 +123,17 @@ class Store:
                 row.status = status
                 db.commit()
 
+    def update_appointment_time(self, appointment_id: str, time: str) -> None:
+        with SessionLocal() as db:
+            row = (
+                db.query(m.Appointment)
+                .filter(m.Appointment.appointment_id == appointment_id)
+                .one_or_none()
+            )
+            if row:
+                row.time = time
+                db.commit()
+
     # ------------------------------------------------------------------
     # Audit log
     # ------------------------------------------------------------------

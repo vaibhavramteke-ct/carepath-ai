@@ -64,6 +64,54 @@ def test_appointment_ids_increment_and_are_unique(fresh_store):
 
 
 # --------------------------------------------------------------------------- #
+# Appointments
+# --------------------------------------------------------------------------- #
+def _sample_appointment(apt_id: str) -> dict:
+    return {
+        "appointment_id": apt_id,
+        "doctor": "Dr. Mehta",
+        "department": "Cardiology",
+        "time": "Today 5:00 PM",
+        "fee": 1200,
+        "location": "OPD Block, Room 204",
+        "status": "Confirmed",
+    }
+
+
+def test_add_appointment_persists_and_updates_session(fresh_store):
+    session = fresh_store.get_or_create_session(None)
+    apt = _sample_appointment(fresh_store.next_appointment_id())
+    fresh_store.add_appointment(session, apt)
+    # Mutates the in-flight dict...
+    assert session["appointments"][-1] == apt
+    # ...and persists, so a reload sees it.
+    reloaded = fresh_store.get_or_create_session(session["id"])
+    assert reloaded["appointments"][-1]["appointment_id"] == apt["appointment_id"]
+
+
+def test_update_appointment_time_persists(fresh_store):
+    session = fresh_store.get_or_create_session(None)
+    apt = _sample_appointment(fresh_store.next_appointment_id())
+    fresh_store.add_appointment(session, apt)
+
+    fresh_store.update_appointment_time(apt["appointment_id"], "Tomorrow 4:30 PM")
+
+    reloaded = fresh_store.get_or_create_session(session["id"])
+    assert reloaded["appointments"][-1]["time"] == "Tomorrow 4:30 PM"
+
+
+def test_update_appointment_status_persists(fresh_store):
+    session = fresh_store.get_or_create_session(None)
+    apt = _sample_appointment(fresh_store.next_appointment_id())
+    fresh_store.add_appointment(session, apt)
+
+    fresh_store.update_appointment_status(apt["appointment_id"], "Cancelled")
+
+    reloaded = fresh_store.get_or_create_session(session["id"])
+    assert reloaded["appointments"][-1]["status"] == "Cancelled"
+
+
+# --------------------------------------------------------------------------- #
 # Audit log
 # --------------------------------------------------------------------------- #
 def test_log_audit_stamps_timestamp_and_preserves_fields(fresh_store):
