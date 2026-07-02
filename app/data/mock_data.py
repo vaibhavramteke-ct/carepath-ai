@@ -11,6 +11,8 @@ out of the database through :mod:`app.db.repository`. The keyword maps and
 
 from __future__ import annotations
 
+import re
+
 # --------------------------------------------------------------------------- #
 # Departments
 # --------------------------------------------------------------------------- #
@@ -125,6 +127,136 @@ def match_department(text: str) -> str | None:
         if any(k in low for k in keywords):
             return dept
     return None
+
+
+# --------------------------------------------------------------------------- #
+# Appointment slot matching (non-emergency; pure keyword/time logic)
+#
+# Doctor slots are fixed strings like "Tomorrow 4:30 PM" / "Saturday 9:30 AM".
+# These helpers let the appointment agent honour a day/time the patient names
+# instead of always booking the first slot.
+# --------------------------------------------------------------------------- #
+_DAY_WORDS: tuple[str, ...] = (
+    "today", "tomorrow",
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+)
+
+# Rough part-of-day -> meridiem, used only when the patient gives no clock time.
+_PART_OF_DAY: dict[str, str] = {
+    "morning": "am",
+    "noon": "pm",
+    "afternoon": "pm",
+    "evening": "pm",
+    "night": "pm",
+}
+
+# A clock time carrying a meridiem, e.g. "4:30 pm", "5pm", "9 a.m.".
+_MERIDIEM_TIME = re.compile(r"(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m\.?\b")
+# A bare "h:mm" with no meridiem, e.g. "12:30".
+_COLON_TIME = re.compile(r"\b(\d{1,2}):(\d{2})\b")
+# "at 6" style hour references (avoids matching stray ids like APT-10247).
+_AT_HOUR = re.compile(r"\bat\s+(\d{1,2})\b")
+
+
+def _extract_times(low: str) -> list[tuple[int, int | None, str | None]]:
+    """Parse (hour, minute, meridiem) tuples from free text.
+
+    A bare number only counts as a time when it carries a meridiem, a ``:mm``,
+    or an explicit ``at`` — so appointment ids and other stray digits are not
+    mistaken for times. ``minute``/``meridiem`` are ``None`` when unspecified.
+    """
+    times: list[tuple[int, int | None, str | None]] = []
+    for m in _MERIDIEM_TIME.finditer(low):
+        hour = int(m.group(1))
+        if 1 <= hour <= 12:
+            minute = int(m.group(2)) if m.group(2) is not None else None
+            times.append((hour, minute, "am" if m.group(3) == "a" else "pm"))
+    for m in _COLON_TIME.finditer(low):
+        hour, minute = int(m.group(1)), int(m.group(2))
+        if 1 <= hour <= 12 and 0 <= minute <= 59:
+            times.append((hour, minute, None))
+    for m in _AT_HOUR.finditer(low):
+        hour = int(m.group(1))
+        if 1 <= hour <= 12:
+            times.append((hour, None, None))
+    return times
+
+
+def _parse_slot(slot: str) -> tuple[str | None, int | None, int | None, str | None]:
+    """Split a well-formed slot string into (day, hour, minute, meridiem)."""
+    low = slot.lower()
+    day = next((d for d in _DAY_WORDS if d in low), None)
+    tm = _MERIDIEM_TIME.search(low)
+    if not tm:
+        return day, None, None, None
+    minute = int(tm.group(2)) if tm.group(2) is not None else 0
+    return day, int(tm.group(1)), minute, "am" if tm.group(3) == "a" else "pm"
+
+
+def _score_slot(
+    slot: str,
+    days: set[str],
+    times: list[tuple[int, int | None, str | None]],
+    parts: set[str],
+) -> int:
+    """How well a slot matches the patient's stated day/time (0 = no signal)."""
+    s_day, s_hour, s_min, s_mer = _parse_slot(slot)
+    score = 2 if s_day and s_day in days else 0
+
+    best_time = 0
+    for hour, minute, mer in times:
+        if hour != s_hour:
+            continue
+        if mer is not None and s_mer is not None and mer != s_mer:
+            continue  # explicit meridiem conflict — a different slot
+        if minute is not None and s_min is not None and minute != s_min:
+            continue  # explicit minute conflict
+        points = 2  # the hour matched
+        if mer is not None and mer == s_mer:
+            points += 2
+        if minute is not None and minute == s_min:
+            points += 1
+        best_time = max(best_time, points)
+    score += best_time
+
+    # A vague "in the evening" only counts when no explicit time was matched.
+    if best_time == 0 and s_mer in parts:
+        score += 1
+    return score
+
+
+def mentions_time_preference(text: str) -> bool:
+    """True if the message names a day, a clock time, or a part of the day.
+
+    Lets the caller tell "book me anything" (fall back to the first slot) apart
+    from "book me Tuesday" for a doctor with no Tuesday slot (offer alternatives
+    rather than silently booking a different time).
+    """
+    low = text.lower()
+    if any(d in low for d in _DAY_WORDS):
+        return True
+    if any(p in low for p in _PART_OF_DAY):
+        return True
+    return bool(_extract_times(low))
+
+
+def match_slot(text: str, slots: list[str]) -> str | None:
+    """Return the slot best matching the day/time in ``text``, else ``None``.
+
+    Ties are broken toward the earliest listed slot (slots are chronological),
+    so "tomorrow" for a doctor with two tomorrow slots picks the earlier one.
+    """
+    low = text.lower()
+    days = {d for d in _DAY_WORDS if d in low}
+    times = _extract_times(low)
+    parts = {_PART_OF_DAY[w] for w in _PART_OF_DAY if w in low}
+
+    best, best_score = None, 0
+    for slot in slots:
+        score = _score_slot(slot, days, times, parts)
+        if score > best_score:
+            best, best_score = slot, score
+    return best if best_score > 0 else None
 
 
 # --------------------------------------------------------------------------- #
