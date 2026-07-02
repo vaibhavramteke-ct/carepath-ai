@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import re
+
 from ...data import mock_data as md
 from ...db import repository as repo
 from ..base import AgentContext, AgentResult, BaseAgent
+
+_APT_ID_RE = re.compile(r"apt-\d+")
 
 
 class AppointmentAgent(BaseAgent):
@@ -70,8 +74,15 @@ class AppointmentAgent(BaseAgent):
                 quick_actions=["Find a doctor"], llm_used=used,
             )
 
-        # We have a doctor — confirm the booking against the first open slot.
-        slot = doctor["slots"][0]
+        # We have a doctor — honour a slot the patient named, if any.
+        slot = md.match_slot(ctx.message, doctor["slots"])
+        if slot is None and md.mentions_time_preference(ctx.message):
+            # A time was requested but the doctor has no such slot — don't
+            # silently book a different one; offer the real options instead.
+            return self._offer_slots(ctx, doctor)
+        if slot is None:
+            slot = doctor["slots"][0]  # no stated preference — earliest slot
+
         apt_id = self.store.next_appointment_id()
         appointment = {
             "appointment_id": apt_id,
@@ -110,16 +121,87 @@ class AppointmentAgent(BaseAgent):
             llm_used=used,
         )
 
+    def _offer_slots(self, ctx: AgentContext, doctor: dict) -> AgentResult:
+        """Requested time isn't available — show the doctor's real open slots."""
+        slots = doctor["slots"]
+        facts = (
+            f"The patient asked for a time that is not available with "
+            f"{doctor['name']} ({doctor['department']}). The available slots are: "
+            f"{', '.join(slots)}. Ask them to choose one of these."
+        )
+        fallback = (
+            f"{doctor['name']} isn't available at that time. The open slots are:\n"
+            + "\n".join(f"• {s}" for s in slots)
+            + "\n\nWhich one would you like?"
+        )
+        reply, used = self.phrase(ctx, facts, fallback)
+        return AgentResult(
+            reply=reply, agent=self.name,
+            data={"doctor": doctor["name"], "available_slots": slots},
+            quick_actions=list(slots), llm_used=used,
+        )
+
+    @staticmethod
+    def _select_appointment(appts: list[dict], message: str) -> dict | None:
+        """Pick which appointment the patient means.
+
+        Prefers an explicit ``APT-####`` id, then a doctor named in the message,
+        otherwise the most recent still-active appointment (so a cancelled one
+        isn't reused). Returns ``None`` only when there are no appointments.
+        """
+        if not appts:
+            return None
+        low = message.lower()
+        id_match = _APT_ID_RE.search(low)
+        if id_match:
+            by_id = next(
+                (a for a in appts if a["appointment_id"].lower() == id_match.group(0)),
+                None,
+            )
+            if by_id:
+                return by_id
+        for appt in reversed(appts):
+            if appt["doctor"].split()[-1].lower() in low:
+                return appt
+        for appt in reversed(appts):
+            if appt.get("status") != "Cancelled":
+                return appt
+        return appts[-1]
+
     # -- reschedule ----------------------------------------------------
     def _reschedule(self, ctx: AgentContext) -> AgentResult:
         appts = ctx.session.get("appointments", [])
-        if not appts:
+        appt = self._select_appointment(appts, ctx.message)
+        if not appt:
             fallback = "I couldn't find an existing appointment to reschedule. Would you like to book a new one?"
             return AgentResult(reply=fallback, agent=self.name,
                                quick_actions=["Book appointment"])
-        appt = appts[-1]
         doctor = next((d for d in repo.all_doctors() if d["name"] == appt["doctor"]), None)
-        options = doctor["slots"][1:] if doctor else ["Tomorrow 10:00 AM"]
+        slots = doctor["slots"] if doctor else []
+
+        # If the patient named an available target slot, move the booking now.
+        target = md.match_slot(ctx.message, slots) if slots else None
+        if target and target != appt["time"]:
+            old_time = appt["time"]
+            appt["time"] = target
+            appt["status"] = "Confirmed"
+            self.store.update_appointment_time(appt["appointment_id"], target)
+            facts = (
+                f"Appointment {appt['appointment_id']} with {appt['doctor']} has "
+                f"been moved from {old_time} to {target}."
+            )
+            fallback = (
+                f"Done — appointment {appt['appointment_id']} with {appt['doctor']} "
+                f"is now {target} (was {old_time})."
+            )
+            reply, used = self.phrase(ctx, facts, fallback)
+            return AgentResult(reply=reply, agent=self.name,
+                               data={"appointment": appt},
+                               quick_actions=["Reschedule again", "Cancel"],
+                               llm_used=used)
+
+        # Otherwise offer the alternative slots and ask which to move to.
+        options = [s for s in slots if s != appt["time"]] or ["Tomorrow 10:00 AM"]
         facts = (
             f"Existing appointment {appt['appointment_id']} with {appt['doctor']} "
             f"is at {appt['time']}. Other available slots: {', '.join(options)}."
@@ -137,12 +219,12 @@ class AppointmentAgent(BaseAgent):
     # -- cancel --------------------------------------------------------
     def _cancel(self, ctx: AgentContext) -> AgentResult:
         appts = ctx.session.get("appointments", [])
-        if not appts:
+        appt = self._select_appointment(appts, ctx.message)
+        if not appt:
             return AgentResult(
                 reply="I couldn't find an appointment to cancel. Is there anything else I can help with?",
                 agent=self.name,
             )
-        appt = appts[-1]
         appt["status"] = "Cancelled"
         self.store.update_appointment_status(appt["appointment_id"], "Cancelled")
         facts = f"Appointment {appt['appointment_id']} with {appt['doctor']} is now cancelled."
