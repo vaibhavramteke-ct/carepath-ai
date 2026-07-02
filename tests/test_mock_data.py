@@ -50,6 +50,73 @@ def test_match_department_no_match_returns_none():
 
 
 # --------------------------------------------------------------------------- #
+# Appointment slot matching (pure logic)
+# --------------------------------------------------------------------------- #
+_MEHTA_SLOTS = ["Today 5:00 PM", "Tomorrow 10:00 AM", "Tomorrow 4:30 PM"]
+_KULKARNI_SLOTS = ["Tomorrow 11:00 AM", "Tomorrow 3:00 PM", "Saturday 9:30 AM"]
+_RAO_SLOTS = ["Saturday 10:00 AM", "Saturday 12:30 PM", "Monday 11:00 AM"]
+
+
+@pytest.mark.parametrize(
+    "text, slots, expected",
+    [
+        # Exact day + time.
+        ("book dr mehta tomorrow 4:30 pm", _MEHTA_SLOTS, "Tomorrow 4:30 PM"),
+        # Day only, two candidates -> earliest listed wins.
+        ("something tomorrow", _MEHTA_SLOTS, "Tomorrow 10:00 AM"),
+        # Time only, meridiem disambiguates same hour across days.
+        ("can I come at 5pm", _MEHTA_SLOTS, "Today 5:00 PM"),
+        # "at h" hour reference.
+        ("see me at 11", _KULKARNI_SLOTS, "Tomorrow 11:00 AM"),
+        # Colon time without meridiem.
+        ("the 12:30 slot", _RAO_SLOTS, "Saturday 12:30 PM"),
+        # Weekday name.
+        ("monday works for me", _RAO_SLOTS, "Monday 11:00 AM"),
+        # Part-of-day only, no clock time.
+        ("something in the morning", _KULKARNI_SLOTS, "Tomorrow 11:00 AM"),
+    ],
+)
+def test_match_slot_picks_requested(text, slots, expected):
+    assert md.match_slot(text, slots) == expected
+
+
+@pytest.mark.parametrize(
+    "text, slots",
+    [
+        # No day/time signal at all.
+        ("book dr mehta", _MEHTA_SLOTS),
+        # A day the doctor does not offer.
+        ("can you do wednesday", _MEHTA_SLOTS),
+        # An hour none of the slots match.
+        ("how about 8pm", _MEHTA_SLOTS),
+    ],
+)
+def test_match_slot_returns_none_when_unmatched(text, slots):
+    assert md.match_slot(text, slots) is None
+
+
+def test_match_slot_ignores_appointment_id_digits():
+    # The id must not be misread as a time; nothing else in the text matches.
+    assert md.match_slot("reschedule APT-10247", _MEHTA_SLOTS) is None
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("book dr mehta tomorrow", True),
+        ("at 4:30 pm please", True),
+        ("in the evening", True),
+        ("saturday", True),
+        ("book dr mehta", False),
+        ("cancel my appointment", False),
+        ("reschedule APT-10247", False),
+    ],
+)
+def test_mentions_time_preference(text, expected):
+    assert md.mentions_time_preference(text) is expected
+
+
+# --------------------------------------------------------------------------- #
 # Doctor lookups
 # --------------------------------------------------------------------------- #
 def test_doctors_in_filters_by_department():

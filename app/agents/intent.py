@@ -32,7 +32,7 @@ INTENTS: list[str] = [
 # win ties, so the more specific ones are listed first.
 _KEYWORDS: list[tuple[str, list[str]]] = [
     ("appointment_cancellation", ["cancel"]),
-    ("appointment_reschedule", ["reschedule", "change my appointment", "postpone", "prepone"]),
+    ("appointment_reschedule", ["reschedule", "change my appointment", "change my slot", "postpone", "prepone", "move my appointment", "move it to", "shift my appointment"]),
     ("insurance_claim_query", ["insurance", "claim", "cashless", "policy", "reimburs", "tpa"]),
     ("billing_query", ["bill", "payment", "invoice", "charges", "cost", "pay", "estimate"]),
     ("prescription_help", ["prescription", "medicine", "tablet", "dose", "dosage", "after food", "before food"]),

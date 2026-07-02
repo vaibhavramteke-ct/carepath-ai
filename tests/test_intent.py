@@ -24,6 +24,8 @@ def detector():
     [
         ("Please cancel my appointment", "appointment_cancellation"),
         ("I want to reschedule my appointment", "appointment_reschedule"),
+        ("Can you move my appointment to Friday?", "appointment_reschedule"),
+        ("Please move it to tomorrow 4:30 pm", "appointment_reschedule"),
         ("Is my insurance claim approved?", "insurance_claim_query"),
         ("Can I see my bill?", "billing_query"),
         ("When should I take this tablet?", "prescription_help"),

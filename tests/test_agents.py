@@ -111,6 +111,85 @@ def test_reschedule_without_existing_appointment(llm, store):
     assert "couldn't find" in result.reply.lower()
 
 
+def test_book_honors_requested_slot(llm, store):
+    ctx = make_ctx(store, "book dr mehta tomorrow 4:30 pm", intent="appointment_booking")
+    result = AppointmentAgent(llm, store).handle(ctx)
+    assert result.data["appointment"]["time"] == "Tomorrow 4:30 PM"
+
+
+def test_book_without_preference_uses_first_slot(llm, store):
+    # Regression: no day/time stated -> earliest slot, as before.
+    ctx = make_ctx(store, "book dr mehta", intent="appointment_booking")
+    result = AppointmentAgent(llm, store).handle(ctx)
+    assert result.data["appointment"]["time"] == md.DOCTORS[0]["slots"][0]
+
+
+def test_book_unavailable_time_offers_slots_without_booking(llm, store):
+    ctx = make_ctx(store, "book dr mehta on wednesday", intent="appointment_booking")
+    result = AppointmentAgent(llm, store).handle(ctx)
+    # Nothing booked; the doctor's real slots are offered instead.
+    assert "appointment" not in result.data
+    assert result.data["available_slots"] == [
+        d for d in md.DOCTORS if d["name"] == "Dr. Mehta"
+    ][0]["slots"]
+
+
+def test_reschedule_to_named_slot_moves_appointment(llm, store):
+    agent = AppointmentAgent(llm, store)
+    book_ctx = make_ctx(store, "book dr mehta", intent="appointment_booking")
+    agent.handle(book_ctx)
+    original_time = book_ctx.session["appointments"][-1]["time"]
+
+    reschedule_ctx = AgentContext(
+        message="move it to tomorrow 4:30 pm",
+        session=book_ctx.session,
+        intent="appointment_reschedule",
+    )
+    result = agent.handle(reschedule_ctx)
+    assert result.data["appointment"]["time"] == "Tomorrow 4:30 PM"
+    assert original_time != "Tomorrow 4:30 PM"
+    # Persisted, not just mutated in memory.
+    reloaded = store.get_or_create_session(book_ctx.session["id"])
+    assert reloaded["appointments"][-1]["time"] == "Tomorrow 4:30 PM"
+
+
+def test_reschedule_without_target_offers_alternatives(llm, store):
+    agent = AppointmentAgent(llm, store)
+    book_ctx = make_ctx(store, "book dr mehta", intent="appointment_booking")
+    agent.handle(book_ctx)
+    current = book_ctx.session["appointments"][-1]["time"]
+
+    reschedule_ctx = AgentContext(
+        message="I need to reschedule",
+        session=book_ctx.session,
+        intent="appointment_reschedule",
+    )
+    result = agent.handle(reschedule_ctx)
+    # No move performed; alternatives exclude the current slot.
+    assert result.data["appointment"]["time"] == current
+    assert current not in result.data["options"]
+
+
+def test_cancel_targets_appointment_by_doctor_name(llm, store):
+    agent = AppointmentAgent(llm, store)
+    session = store.get_or_create_session(None)
+    for msg in ("book dr mehta", "book dr kulkarni"):
+        agent.handle(AgentContext(message=msg, session=session,
+                                  intent="appointment_booking"))
+
+    cancel_ctx = AgentContext(
+        message="cancel my appointment with dr mehta",
+        session=session,
+        intent="appointment_cancellation",
+    )
+    result = agent.handle(cancel_ctx)
+    # The named (Mehta) appointment is cancelled, not simply the latest (Kulkarni).
+    assert result.data["appointment"]["doctor"] == "Dr. Mehta"
+    assert result.data["appointment"]["status"] == "Cancelled"
+    kulkarni = next(a for a in session["appointments"] if a["doctor"] == "Dr. Kulkarni")
+    assert kulkarni["status"] == "Confirmed"
+
+
 def test_cancel_marks_latest_appointment_cancelled(llm, store):
     book_ctx = make_ctx(store, "book dr mehta", intent="appointment_booking")
     agent = AppointmentAgent(llm, store)
