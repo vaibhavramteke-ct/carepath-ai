@@ -23,6 +23,8 @@ class AppointmentAgent(BaseAgent):
             return self._cancel(ctx)
         if ctx.intent == "appointment_reschedule":
             return self._reschedule(ctx)
+        if ctx.intent == "appointment_status":
+            return self._status(ctx)
         return self._book(ctx)
 
     # -- book ----------------------------------------------------------
@@ -167,6 +169,56 @@ class AppointmentAgent(BaseAgent):
             if appt.get("status") != "Cancelled":
                 return appt
         return appts[-1]
+
+    # -- status (view) -------------------------------------------------
+    def _status(self, ctx: AgentContext) -> AgentResult:
+        appts = ctx.session.get("appointments", [])
+        if not appts:
+            fallback = (
+                "You don't have any appointments booked yet. "
+                "Would you like to book one?"
+            )
+            return AgentResult(reply=fallback, agent=self.name,
+                               quick_actions=["Book appointment"])
+
+        # Narrow to a specific booking if the patient named a doctor or id.
+        low = ctx.message.lower()
+        named = [
+            a for a in appts
+            if a["doctor"].split()[-1].lower() in low
+            or a["appointment_id"].lower() in low
+        ]
+        shown = named or appts
+
+        def describe(a: dict) -> str:
+            return (
+                f"{a['appointment_id']}: {a['doctor']} ({a['department']}), "
+                f"{a['time']}, {a['location']}, Rs.{a['fee']}, status {a['status']}"
+            )
+
+        facts = (
+            "The patient's appointment(s) on record (do not invent any others):\n"
+            + "\n".join(f"- {describe(a)}" for a in shown)
+        )
+        fallback = (
+            ("Here is your appointment:" if len(shown) == 1
+             else "Here are your appointments:")
+            + "\n"
+            + "\n".join(
+                f"• {a['appointment_id']} — {a['doctor']} ({a['department']})\n"
+                f"  {a['time']} · {a['location']} · Rs.{a['fee']} · {a['status']}"
+                for a in shown
+            )
+        )
+        reply, used = self.phrase(ctx, facts, fallback)
+
+        has_active = any(a.get("status") != "Cancelled" for a in shown)
+        quick_actions = (["Reschedule", "Cancel"] if has_active else []) + ["Book appointment"]
+        return AgentResult(
+            reply=reply, agent=self.name,
+            data={"appointments": shown},
+            quick_actions=quick_actions, llm_used=used,
+        )
 
     # -- reschedule ----------------------------------------------------
     def _reschedule(self, ctx: AgentContext) -> AgentResult:

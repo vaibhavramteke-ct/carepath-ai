@@ -190,6 +190,63 @@ def test_cancel_targets_appointment_by_doctor_name(llm, store):
     assert kulkarni["status"] == "Confirmed"
 
 
+def test_status_without_appointments_offers_booking(llm, store):
+    ctx = make_ctx(store, "what's my appointment?", intent="appointment_status")
+    result = AppointmentAgent(llm, store).handle(ctx)
+    assert "appointments" not in result.data
+    assert "Book appointment" in result.quick_actions
+    assert "book" in result.reply.lower()
+
+
+def test_status_lists_booked_appointment(llm, store):
+    agent = AppointmentAgent(llm, store)
+    book_ctx = make_ctx(store, "book dr mehta", intent="appointment_booking")
+    agent.handle(book_ctx)
+    apt_id = book_ctx.session["appointments"][-1]["appointment_id"]
+
+    status_ctx = AgentContext(
+        message="when is my appointment?",
+        session=book_ctx.session,
+        intent="appointment_status",
+    )
+    result = agent.handle(status_ctx)
+    assert [a["appointment_id"] for a in result.data["appointments"]] == [apt_id]
+    assert apt_id in result.reply
+    assert "Reschedule" in result.quick_actions
+
+
+def test_status_narrows_to_named_doctor(llm, store):
+    agent = AppointmentAgent(llm, store)
+    session = store.get_or_create_session(None)
+    for msg in ("book dr mehta", "book dr kulkarni"):
+        agent.handle(AgentContext(message=msg, session=session,
+                                  intent="appointment_booking"))
+
+    status_ctx = AgentContext(
+        message="show my appointment with dr mehta",
+        session=session,
+        intent="appointment_status",
+    )
+    result = agent.handle(status_ctx)
+    doctors = [a["doctor"] for a in result.data["appointments"]]
+    assert doctors == ["Dr. Mehta"]
+
+
+def test_status_after_cancel_offers_booking_not_reschedule(llm, store):
+    agent = AppointmentAgent(llm, store)
+    book_ctx = make_ctx(store, "book dr mehta", intent="appointment_booking")
+    agent.handle(book_ctx)
+    agent.handle(AgentContext(message="cancel it", session=book_ctx.session,
+                              intent="appointment_cancellation"))
+
+    status_ctx = AgentContext(message="do I have an appointment",
+                              session=book_ctx.session, intent="appointment_status")
+    result = agent.handle(status_ctx)
+    # The (only) appointment is cancelled -> don't offer Reschedule/Cancel.
+    assert "Reschedule" not in result.quick_actions
+    assert "Book appointment" in result.quick_actions
+
+
 def test_cancel_marks_latest_appointment_cancelled(llm, store):
     book_ctx = make_ctx(store, "book dr mehta", intent="appointment_booking")
     agent = AppointmentAgent(llm, store)
