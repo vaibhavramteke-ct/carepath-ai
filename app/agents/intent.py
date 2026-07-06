@@ -13,6 +13,7 @@ INTENTS: list[str] = [
     "appointment_booking",
     "appointment_reschedule",
     "appointment_cancellation",
+    "appointment_status",
     "previsit_checklist",
     "hospital_navigation",
     "lab_report",
@@ -33,6 +34,10 @@ INTENTS: list[str] = [
 _KEYWORDS: list[tuple[str, list[str]]] = [
     ("appointment_cancellation", ["cancel"]),
     ("appointment_reschedule", ["reschedule", "change my appointment", "change my slot", "postpone", "prepone", "move my appointment", "move it to", "shift my appointment"]),
+    # Viewing an existing booking. Listed before appointment_booking so these
+    # don't get swallowed by its broad "appointment" cue; the phrases are
+    # deliberately specific so "book my appointment" still routes to booking.
+    ("appointment_status", ["my appointment details", "when is my appointment", "when's my appointment", "what is my appointment", "what's my appointment", "appointment status", "status of my appointment", "view my appointment", "view appointment", "show my appointment", "see my appointment", "check my appointment", "do i have an appointment", "upcoming appointment", "my booked appointment", "my current appointment"]),
     ("insurance_claim_query", ["insurance", "claim", "cashless", "policy", "reimburs", "tpa"]),
     ("billing_query", ["bill", "payment", "invoice", "charges", "cost", "pay", "estimate"]),
     ("prescription_help", ["prescription", "medicine", "tablet", "dose", "dosage", "after food", "before food"]),

@@ -91,6 +91,18 @@ def test_new_session_id_is_returned_when_omitted(client):
     assert body["session_id"].startswith("sess-")
 
 
+def test_view_appointment_after_booking(client):
+    first = chat(client, "Book an appointment with Dr. Mehta")
+    session_id = first["session_id"]
+    apt_id = first["data"]["appointment"]["appointment_id"]
+
+    # Later turn: ask about the booking and get its details back.
+    body = chat(client, "When is my appointment?", session_id=session_id)
+    assert body["intent"] == "appointment_status"
+    assert body["agent"] == "appointment_agent"
+    assert [a["appointment_id"] for a in body["data"]["appointments"]] == [apt_id]
+
+
 # --------------------------------------------------------------------------- #
 # Prescription / discharge / billing / insurance
 # --------------------------------------------------------------------------- #

@@ -60,6 +60,7 @@ class Orchestrator:
             "appointment_booking": appointment,
             "appointment_reschedule": appointment,
             "appointment_cancellation": appointment,
+            "appointment_status": appointment,
             "previsit_checklist": previsit,
             "prescription_help": prescription,
             "discharge_help": discharge,
