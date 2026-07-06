@@ -26,6 +26,9 @@ def detector():
         ("I want to reschedule my appointment", "appointment_reschedule"),
         ("Can you move my appointment to Friday?", "appointment_reschedule"),
         ("Please move it to tomorrow 4:30 pm", "appointment_reschedule"),
+        ("When is my appointment?", "appointment_status"),
+        ("Show my appointment details", "appointment_status"),
+        ("Do I have an appointment booked?", "appointment_status"),
         ("Is my insurance claim approved?", "insurance_claim_query"),
         ("Can I see my bill?", "billing_query"),
         ("When should I take this tablet?", "prescription_help"),
@@ -49,6 +52,14 @@ def test_keyword_detection(detector, message, expected):
 def test_cancellation_beats_appointment_booking(detector):
     # "cancel" is listed before generic "appointment" cues, so it wins.
     assert detector.detect("cancel my appointment booking") == "appointment_cancellation"
+
+
+def test_status_cues_do_not_hijack_booking_or_cancel(detector):
+    # appointment_status is specific enough that action verbs still win.
+    assert detector.detect("book my appointment") == "appointment_booking"
+    assert detector.detect("cancel my appointment") == "appointment_cancellation"
+    # But a pure lookup routes to status, not booking's broad "appointment" cue.
+    assert detector.detect("what's my appointment?") == "appointment_status"
 
 
 def test_prescription_cue_beats_reminder_cue(detector):

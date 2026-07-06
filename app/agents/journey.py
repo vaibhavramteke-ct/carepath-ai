@@ -35,6 +35,7 @@ _INTENT_STAGE = {
     "appointment_booking": "appointment_booking",
     "appointment_reschedule": "appointment_booking",
     "appointment_cancellation": "appointment_booking",
+    "appointment_status": "appointment_booking",
     "previsit_checklist": "pre_visit_preparation",
     "hospital_navigation": "hospital_arrival",
     "lab_report": "diagnostics",
